@@ -8,12 +8,14 @@
   ],
   "host_permissions": [
     "http://localhost:8787/*",
-    "<all_urls>"
+    "http://localhost:8788/*",
+    "file:///*"
   ],
   "content_scripts": [
     {
       "matches": [
-        "<all_urls>"
+        "http://localhost:8788/*",
+        "file:///*"
       ],
       "js": [
         "content.js"

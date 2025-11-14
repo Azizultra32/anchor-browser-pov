@@ -5,7 +5,11 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "health": "node scripts/mcp-health-check.mjs",
+    "mcp:start": "scripts/start-chrome-mcp.sh",
+    "mcp:stop": "scripts/stop-chrome-mcp.sh",
+    "mcp:status": "scripts/status-chrome-mcp.sh"
   },
   "keywords": [],
   "author": "",
