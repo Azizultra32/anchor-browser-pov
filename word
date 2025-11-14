@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LOG_DIR="$ROOT_DIR/logs"
+CHROME_LOG="$LOG_DIR/chrome.log"
+AGENT_LOG="$LOG_DIR/agent.log"
+DEMO_LOG="$LOG_DIR/demo.log"
+CHROME_PID_FILE="$ROOT_DIR/.chrome_mcp.pid"
+AGENT_PID_FILE="$ROOT_DIR/.agent.pid"
+DEMO_PID_FILE="$ROOT_DIR/.demo.pid"
+CHROME_BIN_DEFAULT="/Applications/Chromium.app/Contents/MacOS/Chromium"
+CHROME_BIN="${CHROME_BIN:-$CHROME_BIN_DEFAULT}"
+PROFILE_ROOT="/tmp/anchor-mcp"
+
+mkdir -p "$LOG_DIR"
+touch "$CHROME_LOG" "$AGENT_LOG" "$DEMO_LOG"
+
+ensure_dist() {
+  if [[ ! -f "$ROOT_DIR/extension/dist/manifest.json" ]]; then
+    echo "ERROR: extension/dist missing. Run 'npm run build' inside extension/." >&2
+    exit 1
+  fi
+}
+
+start_chrome() {
+  ensure_dist
+  if [[ ! -x "$CHROME_BIN" ]]; then
+    echo "ERROR: Chromium binary not found at $CHROME_BIN" >&2
+    exit 1
+  fi
+  xattr -dr com.apple.quarantine "$CHROME_BIN" >/dev/null 2>&1 || true
+  if [[ -f "$CHROME_PID_FILE" ]] && kill -0 "$(cat "$CHROME_PID_FILE")" 2>/dev/null; then
+    kill "$(cat "$CHROME_PID_FILE")" 2>/dev/null || true
+    sleep 1
+  fi
+  pkill -f "$PROFILE_ROOT" 2>/dev/null || true
+  rm -rf "$PROFILE_ROOT"
+  sleep 1
+  echo "Starting Chromium (DevTools port 9222)..."
+  nohup "$CHROME_BIN" \
+    --remote-debugging-port=9222 \
+    --user-data-dir="$PROFILE_ROOT" \
+    --load-extension="$ROOT_DIR/extension/dist" \
+    --disable-extensions-file-access-check \
+    --allow-insecure-localhost \
+    --enable-logging=stderr \
+    --no-first-run \
+    --no-default-browser-check \
+    >"$CHROME_LOG" 2>&1 &
+  echo $! > "$CHROME_PID_FILE"
+}
+
+start_agent() {
+  lsof -ti tcp:8787 2>/dev/null | xargs -r kill -9 2>/dev/null || true
+  if [[ -f "$AGENT_PID_FILE" ]] && kill -0 "$(cat "$AGENT_PID_FILE")" 2>/dev/null; then
+    kill "$(cat "$AGENT_PID_FILE")" 2>/dev/null || true
+    sleep 1
+  fi
+  echo "Starting agent (http://localhost:8787)..."
+  (cd "$ROOT_DIR/agent" && nohup npm run dev >>"$AGENT_LOG" 2>&1 & echo $! > "$AGENT_PID_FILE")
+}
+
+start_demo() {
+  lsof -ti tcp:8788 2>/dev/null | xargs -r kill -9 2>/dev/null || true
+  if [[ -f "$DEMO_PID_FILE" ]] && kill -0 "$(cat "$DEMO_PID_FILE")" 2>/dev/null; then
+    kill "$(cat "$DEMO_PID_FILE")" 2>/dev/null || true
+    sleep 1
+  fi
+  echo "Starting demo server (http://localhost:8788)..."
+  (cd "$ROOT_DIR/demo" && nohup python3 -m http.server 8788 >>"$DEMO_LOG" 2>&1 & echo $! > "$DEMO_PID_FILE")
+}
+
+wait_for_url() {
+  local url="$1"
+  local label="$2"
+  local attempts=${3:-200}
+  echo "Waiting for $label..."
+  until curl -sf "$url" >/dev/null 2>&1; do
+    attempts=$((attempts-1))
+    if [[ $attempts -le 0 ]]; then
+      echo "ERROR: $label did not become ready" >&2
+      exit 1
+    fi
+    sleep 0.25
+  done
+  echo "$label ready"
+}
+
+check_toggle() {
+  if node "$ROOT_DIR/scripts/check-toggle.mjs" >/dev/null; then
+    return 0
+  fi
+  return 1
+}
+
+cmd_ready() {
+  start_chrome
+  start_agent
+  start_demo
+  wait_for_url "http://localhost:9222/json/version" "DevTools"
+  wait_for_url "http://localhost:8787/" "Agent"
+  wait_for_url "http://localhost:8788/" "Demo"
+  if check_toggle; then
+    echo "Overlay toggle detected on demo page."
+  else
+    echo "ERROR: Overlay toggle missing on demo page (extension not loaded)." >&2
+    exit 1
+  fi
+  cmd_status
+}
+
+print_status_line() {
+  local label="$1"
+  local pid_file="$2"
+  if [[ -f "$pid_file" ]] && kill -0 "$(cat "$pid_file")" 2>/dev/null; then
+    echo "$label: RUNNING (pid $(cat "$pid_file"))"
+  else
+    echo "$label: NOT RUNNING"
+  fi
+}
+
+cmd_status() {
+  echo "=== STATUS ==="
+  print_status_line "Chromium" "$CHROME_PID_FILE"
+  print_status_line "Agent" "$AGENT_PID_FILE"
+  print_status_line "Demo" "$DEMO_PID_FILE"
+  if check_toggle; then
+    echo "Extension: Toggle present"
+  else
+    echo "Extension: Toggle missing"
+  fi
+  echo "--- Logs (last 5 lines) ---"
+  echo "[Chromium]"; tail -n 5 "$CHROME_LOG" || true
+  echo "[Agent]"; tail -n 5 "$AGENT_LOG" || true
+  echo "[Demo]"; tail -n 5 "$DEMO_LOG" || true
+}
+
+case "${1:-}" in
+  ready)
+    cmd_ready
+    ;;
+  status)
+    cmd_status
+    ;;
+  *)
+    echo "Usage: ./word {ready|status}" >&2
+    exit 1
+    ;;
+ esac

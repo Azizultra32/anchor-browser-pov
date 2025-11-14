@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Demo EHR Form</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
+    .row { margin-bottom: 12px; }
+    label { display:block; margin-bottom: 4px; }
+    input, textarea, select { padding: 8px; width: 360px; }
+  </style>
+</head>
+<body>
+  <h1>Demo EHR Intake</h1>
+  <div class="row">
+    <label for="pt_name">Patient Name</label>
+    <input id="pt_name" placeholder="Full name">
+  </div>
+  <div class="row">
+    <label for="dob">Date of Birth</label>
+    <input id="dob" placeholder="YYYY-MM-DD">
+  </div>
+  <div class="row">
+    <label for="cc">Chief Complaint</label>
+    <textarea id="cc" rows="3" placeholder="Free text"></textarea>
+  </div>
+  <div class="row">
+    <label>Sex</label>
+    <select id="sex">
+      <option value="">--</option>
+      <option>Female</option>
+      <option>Male</option>
+      <option>Other</option>
+    </select>
+  </div>
+  <div class="row">
+    <label for="mrn">MRN (read-only)</label>
+    <input id="mrn" value="123456" readonly>
+  </div>
+  <p>Open the overlay with <b>Ctrl+Alt+G</b>.</p>
+</body>
+</html>

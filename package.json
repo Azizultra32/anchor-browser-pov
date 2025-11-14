@@ -1,0 +1,17 @@
+{
+  "name": "anchor-browser-poc",
+  "version": "1.0.0",
+  "description": "This is a minimal proof-of-concept showing: - A Chrome MV3 extension that injects a Ghost Overlay UI - A PHI-safe DOM mapper (labels/roles/selectors only) - A local agent (Node/Express) that receives the map and returns a deterministic fill plan - A demo HTML page to test against",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "chrome-remote-interface": "^0.33.3"
+  }
+}

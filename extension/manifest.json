@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "Anchor Ghost Overlay (POC)",
+  "version": "0.1.0",
+  "description": "PHI-safe DOM mapper + overlay + local agent round-trip.",
+  "permissions": [
+    "tabs"
+  ],
+  "host_permissions": [
+    "http://localhost:8787/*",
+    "<all_urls>"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Anchor Ghost Controls"
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}
