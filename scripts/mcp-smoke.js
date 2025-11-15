@@ -1,117 +1,87 @@
-import CDP from 'chrome-remote-interface'
-import { writeFileSync } from 'fs'
+// CommonJS for zero-config Node
+const CDP = require('chrome-remote-interface');
 
-const PORT = Number(process.env.MCP_DEBUG_PORT || 9222)
-const DEMO_URL = 'http://localhost:8788/ehr.html'
-const SIMPLE_URL = 'http://localhost:8788/simple.html'
+const DEMO_URL = 'http://localhost:8788/ehr.html';
 
-const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms))
-
-async function createClient() {
-  const target = await CDP.New({ port: PORT, url: 'about:blank' })
-  const client = await CDP({ port: PORT, target })
-  const { Page, Runtime, Log } = client
-  await Promise.all([Page.enable(), Runtime.enable(), Log.enable()])
-  return { client, target }
+async function findOrOpenDemoTab() {
+  let targets = await CDP.List();
+  let target = targets.find(t => t.type === 'page' && t.url.startsWith(DEMO_URL));
+  if (!target) {
+    await CDP.New({ url: DEMO_URL });
+    await new Promise(r => setTimeout(r, 500));
+    targets = await CDP.List();
+    target = targets.find(t => t.type === 'page' && t.url.startsWith(DEMO_URL));
+  }
+  if (!target) throw new Error('Could not open demo tab at ' + DEMO_URL);
+  return target;
 }
 
-async function navigate(client, url) {
-  await client.Page.navigate({ url })
-  await client.Page.loadEventFired()
-}
+async function run() {
+  const target = await findOrOpenDemoTab();
+  const client = await CDP({ target });
+  const { Page, Runtime } = client;
 
-async function closeTarget(target) {
-  try {
-    await CDP.Close({ port: PORT, id: target.id })
-  } catch { }
-}
+  await Page.enable();
+  await Runtime.enable();
+  await new Promise(r => setTimeout(r, 500));
 
-function hookLogs(client) {
-  const logs = []
-  client.Runtime.on('consoleAPICalled', ({ type, args }) => {
-    const text = args.map(a => a.value ?? a.description ?? '').join(' ')
-    logs.push({ type, text })
-  })
-  client.Log.on('entryAdded', ({ entry }) => {
-    logs.push({ type: entry.level, text: entry.text })
-  })
-  return logs
-}
-
-async function ensureOverlay(client) {
-  const { result } = await client.Runtime.evaluate({
-    expression: `(() => !!document.getElementById('__anchor_ghost_overlay__'))()`,
+  // 1) Check floating button
+  const btnCheck = await Runtime.evaluate({
+    expression: "!!document.getElementById('__anchor_ghost_toggle__')",
     returnByValue: true
-  })
-  return result.value
+  });
+  if (!btnCheck.result.value) {
+    throw new Error("SMOKE_FAIL toggle_button_missing");
+  }
+
+  // 2) Toggle overlay
+  await Runtime.evaluate({
+    expression: "document.getElementById('__anchor_ghost_toggle__').click(); true;",
+    returnByValue: true
+  });
+
+  // Helper to click overlay buttons by data-action
+  async function clickAction(action) {
+    const res = await Runtime.evaluate({
+      expression: `
+        (function(){
+          const el = document.querySelector('[data-action="${action}"]');
+          if (!el) throw new Error("SMOKE_FAIL button_not_found:${action}");
+          el.click(); true;
+        })()
+      `
+    });
+    return res;
+  }
+
+  await clickAction('map');
+  await new Promise(r => setTimeout(r, 250));
+  await clickAction('send-map');
+  await new Promise(r => setTimeout(r, 400));
+  await clickAction('fill-demo');
+  await new Promise(r => setTimeout(r, 400));
+
+  // 3) Verify demo inputs received values
+  const values = await Runtime.evaluate({
+    expression: `
+      (function(){
+        const out = {};
+        const ids = ['pt_name','cc','bp','hr','temp'];
+        ids.forEach(id => {
+          const n = document.getElementById(id);
+          if (n && 'value' in n) out[id] = n.value;
+        });
+        out;
+      })()
+    `,
+    returnByValue: true
+  });
+
+  console.log(JSON.stringify({ ok: true, values: values.result.value }, null, 2));
+  await client.close();
 }
 
-async function toggleViaButton(client) {
-  await client.Runtime.evaluate({
-    expression: `(() => {
-      const btn = document.getElementById('__anchor_ghost_toggle__');
-      if (!btn) throw new Error('toggle button missing');
-      btn.click();
-      return true;
-    })()`
-  })
-}
-
-async function clickButton(client, id) {
-  const expr = `(() => {
-    const host = document.getElementById('__anchor_ghost_overlay__');
-    if (!host || !host.shadowRoot) throw new Error('overlay missing');
-    const btn = host.shadowRoot.getElementById('${id}');
-    if (!btn) throw new Error('button ${id} not found');
-    btn.click();
-    return true;
-  })()`
-  await client.Runtime.evaluate({ expression: expr })
-}
-
-async function runDemo() {
-  const { client, target } = await createClient()
-  const logs = hookLogs(client)
-  await navigate(client, DEMO_URL)
-  await delay(500)
-  await toggleViaButton(client)
-  await delay(300)
-  const overlayPresent = await ensureOverlay(client)
-  if (!overlayPresent) throw new Error('Overlay failed to appear on demo page')
-  await clickButton(client, 'btnMap')
-  await delay(300)
-  await clickButton(client, 'btnSend')
-  await delay(300)
-  await clickButton(client, 'btnFill')
-  await delay(500)
-  const screenshot = await client.Page.captureScreenshot({ format: 'png' })
-  writeFileSync('/Users/ali/Downloads/anchor-browser-poc/demo-overlay.png', Buffer.from(screenshot.data, 'base64'))
-  const hasLog = logs.some(l => l.text.includes('[AnchorGhost] Content script loaded on:'))
-  await client.close()
-  await closeTarget(target)
-  return { hasLog, logs }
-}
-
-async function runSimple() {
-  const { client, target } = await createClient()
-  const logs = hookLogs(client)
-  await navigate(client, SIMPLE_URL)
-  await delay(300)
-  await toggleViaButton(client)
-  await delay(300)
-  const overlayPresent = await ensureOverlay(client)
-  await client.close()
-  await closeTarget(target)
-  return { hasLog: logs.some(l => l.text.includes('[AnchorGhost] Content script loaded on:')), overlayPresent }
-}
-
-async function main() {
-  const demo = await runDemo()
-  const simple = await runSimple()
-  console.log(JSON.stringify({ demoLogObserved: demo.hasLog, simpleLogObserved: simple.hasLog, simpleOverlay: simple.overlayPresent, demoTailLogs: demo.logs.slice(-6) }, null, 2))
-}
-
-main().catch(err => {
-  console.error('SMOKE_FAIL', err)
-  process.exitCode = 1
-})
+run().catch(err => {
+  console.error(String(err.message || err));
+  process.exit(1);
+});

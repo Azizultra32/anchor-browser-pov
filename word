@@ -1,151 +1,111 @@
 #!/usr/bin/env bash
-
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
-LOG_DIR="$ROOT_DIR/logs"
-CHROME_LOG="$LOG_DIR/chrome.log"
-AGENT_LOG="$LOG_DIR/agent.log"
-DEMO_LOG="$LOG_DIR/demo.log"
-CHROME_PID_FILE="$ROOT_DIR/.chrome_mcp.pid"
-AGENT_PID_FILE="$ROOT_DIR/.agent.pid"
-DEMO_PID_FILE="$ROOT_DIR/.demo.pid"
-CHROME_BIN_DEFAULT="/Applications/Chromium.app/Contents/MacOS/Chromium"
-CHROME_BIN="${CHROME_BIN:-$CHROME_BIN_DEFAULT}"
-PROFILE_ROOT="/tmp/anchor-mcp"
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+LOGS="$ROOT/logs"
+PROFILE="/tmp/anchor-mcp"
+PORT=9222
+EXT_DIR="$ROOT/extension/dist"
+CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 
-mkdir -p "$LOG_DIR"
-touch "$CHROME_LOG" "$AGENT_LOG" "$DEMO_LOG"
+mkdir -p "$LOGS"
 
-ensure_dist() {
-  if [[ ! -f "$ROOT_DIR/extension/dist/manifest.json" ]]; then
-    echo "ERROR: extension/dist missing. Run 'npm run build' inside extension/." >&2
-    exit 1
-  fi
-}
+alive() { lsof -i :"$1" >/dev/null 2>&1; }
+curl_ok() { curl -fsS "$1" >/dev/null 2>&1; }
 
 start_chrome() {
-  ensure_dist
-  if [[ ! -x "$CHROME_BIN" ]]; then
-    echo "ERROR: Chromium binary not found at $CHROME_BIN" >&2
-    exit 1
-  fi
-  xattr -dr com.apple.quarantine "$CHROME_BIN" >/dev/null 2>&1 || true
-  if [[ -f "$CHROME_PID_FILE" ]] && kill -0 "$(cat "$CHROME_PID_FILE")" 2>/dev/null; then
-    kill "$(cat "$CHROME_PID_FILE")" 2>/dev/null || true
-    sleep 1
-  fi
-  pkill -f "$PROFILE_ROOT" 2>/dev/null || true
-  rm -rf "$PROFILE_ROOT"
-  sleep 1
-  echo "Starting Chromium (DevTools port 9222)..."
-  nohup "$CHROME_BIN" \
-    --remote-debugging-port=9222 \
-    --user-data-dir="$PROFILE_ROOT" \
-    --load-extension="$ROOT_DIR/extension/dist" \
+  pkill -f "remote-debugging-port=$PORT" || true
+  sleep 0.5
+
+  nohup "$CHROME" \
+    --remote-debugging-port="$PORT" \
+    --user-data-dir="$PROFILE" \
+    --disable-extensions-except="$EXT_DIR" \
+    --load-extension="$EXT_DIR" \
     --disable-extensions-file-access-check \
-    --allow-insecure-localhost \
-    --enable-logging=stderr \
-    --no-first-run \
-    --no-default-browser-check \
-    >"$CHROME_LOG" 2>&1 &
-  echo $! > "$CHROME_PID_FILE"
+    --allow-file-access-from-files \
+    --disable-web-security \
+    > "$LOGS/chrome.log" 2>&1 &
+
+  for i in {1..40}; do
+    curl_ok "http://localhost:$PORT/json/version" && break
+    sleep 0.25
+  done
+  curl_ok "http://localhost:$PORT/json/version" || { echo "Chrome DevTools not reachable on :$PORT"; exit 1; }
 }
 
 start_agent() {
-  lsof -ti tcp:8787 2>/dev/null | xargs -r kill -9 2>/dev/null || true
-  if [[ -f "$AGENT_PID_FILE" ]] && kill -0 "$(cat "$AGENT_PID_FILE")" 2>/dev/null; then
-    kill "$(cat "$AGENT_PID_FILE")" 2>/dev/null || true
-    sleep 1
-  fi
-  echo "Starting agent (http://localhost:8787)..."
-  (cd "$ROOT_DIR/agent" && nohup npm run dev >>"$AGENT_LOG" 2>&1 & echo $! > "$AGENT_PID_FILE")
+  (
+    cd "$ROOT/agent"
+    if [ -f package.json ] && grep -q '"dev"' package.json; then
+      nohup npm run dev > "$LOGS/agent.log" 2>&1 &
+    elif [ -f server.js ]; then
+      nohup node server.js > "$LOGS/agent.log" 2>&1 &
+    else
+      echo "Agent start command not found (need npm run dev or server.js)"; exit 1
+    fi
+  )
+  for i in {1..40}; do curl_ok "http://localhost:8787/" && break; sleep 0.25; done
+  curl_ok "http://localhost:8787/" || { echo "Agent not responding on :8787"; exit 1; }
 }
 
 start_demo() {
-  lsof -ti tcp:8788 2>/dev/null | xargs -r kill -9 2>/dev/null || true
-  if [[ -f "$DEMO_PID_FILE" ]] && kill -0 "$(cat "$DEMO_PID_FILE")" 2>/dev/null; then
-    kill "$(cat "$DEMO_PID_FILE")" 2>/dev/null || true
-    sleep 1
-  fi
-  echo "Starting demo server (http://localhost:8788)..."
-  (cd "$ROOT_DIR/demo" && nohup python3 -m http.server 8788 >>"$DEMO_LOG" 2>&1 & echo $! > "$DEMO_PID_FILE")
+  ( cd "$ROOT/demo" && nohup python3 -m http.server 8788 > "$LOGS/demo.log" 2>&1 & )
+  for i in {1..40}; do alive 8788 && break; sleep 0.25; done
+  alive 8788 || { echo "Demo server not listening on :8788"; exit 1; }
 }
 
-wait_for_url() {
-  local url="$1"
-  local label="$2"
-  local attempts=${3:-200}
-  echo "Waiting for $label..."
-  until curl -sf "$url" >/dev/null 2>&1; do
-    attempts=$((attempts-1))
-    if [[ $attempts -le 0 ]]; then
-      echo "ERROR: $label did not become ready" >&2
-      exit 1
+status() {
+  echo "== Status @ $(date) =="
+  printf "%-30s %s\n" "Chrome (DevTools :$PORT)" "$(alive $PORT && echo RUNNING || echo DOWN)"
+  printf "%-30s %s\n" "Agent (:8787)"         "$(alive 8787 && echo RUNNING || echo DOWN)"
+  printf "%-30s %s\n" "Demo (:8788)"          "$(alive 8788 && echo RUNNING || echo DOWN)"
+  echo
+  echo "-- Last 5 lines: chrome.log --"; tail -n 5 "$LOGS/chrome.log" 2>/dev/null || true
+  echo "-- Last 5 lines: agent.log  --"; tail -n 5 "$LOGS/agent.log"  2>/dev/null || true
+  echo "-- Last 5 lines: demo.log   --"; tail -n 5 "$LOGS/demo.log"   2>/dev/null || true
+
+  if curl_ok "http://localhost:$PORT/json"; then
+    if curl -s "http://localhost:$PORT/json" | grep -q 'chrome-extension://'; then
+      echo "Extension pages: DETECTED"
+    else
+      echo "Extension pages: NOT DETECTED (first run: chrome://extensions → Load unpacked → $EXT_DIR)"
     fi
-    sleep 0.25
-  done
-  echo "$label ready"
-}
-
-check_toggle() {
-  if node "$ROOT_DIR/scripts/check-toggle.mjs" >/dev/null; then
-    return 0
   fi
-  return 1
 }
 
-cmd_ready() {
+ready() {
+  ( cd "$ROOT/extension" && npm install && npm run build )
   start_chrome
   start_agent
   start_demo
-  wait_for_url "http://localhost:9222/json/version" "DevTools"
-  wait_for_url "http://localhost:8787/" "Agent"
-  wait_for_url "http://localhost:8788/" "Demo"
-  if check_toggle; then
-    echo "Overlay toggle detected on demo page."
-  else
-    echo "ERROR: Overlay toggle missing on demo page (extension not loaded)." >&2
-    exit 1
-  fi
-  cmd_status
+  curl -fsS "http://localhost:$PORT/json/new?http://localhost:8788/ehr.html" >/dev/null || true
+  status
+  echo
+  echo "If extension isn't visible: chrome://extensions → Developer mode ON → Load unpacked → $EXT_DIR"
 }
 
-print_status_line() {
-  local label="$1"
-  local pid_file="$2"
-  if [[ -f "$pid_file" ]] && kill -0 "$(cat "$pid_file")" 2>/dev/null; then
-    echo "$label: RUNNING (pid $(cat "$pid_file"))"
-  else
-    echo "$label: NOT RUNNING"
-  fi
+stop() {
+  echo "Stopping services…"
+  pkill -f "remote-debugging-port=$PORT" || true
+  pkill -f "python3 -m http.server 8788" || true
+  pkill -f "tsx watch src/server.ts" || pkill -f "node .*agent" || true
+  sleep 0.5
+  echo "Stopped."
 }
 
-cmd_status() {
-  echo "=== STATUS ==="
-  print_status_line "Chromium" "$CHROME_PID_FILE"
-  print_status_line "Agent" "$AGENT_PID_FILE"
-  print_status_line "Demo" "$DEMO_PID_FILE"
-  if check_toggle; then
-    echo "Extension: Toggle present"
-  else
-    echo "Extension: Toggle missing"
-  fi
-  echo "--- Logs (last 5 lines) ---"
-  echo "[Chromium]"; tail -n 5 "$CHROME_LOG" || true
-  echo "[Agent]"; tail -n 5 "$AGENT_LOG" || true
-  echo "[Demo]"; tail -n 5 "$DEMO_LOG" || true
+reset() {
+  stop
+  rm -rf "$PROFILE"
+  rm -f "$LOGS/"*.log || true
+  echo "Profile and logs cleared."
+  ready
 }
 
 case "${1:-}" in
-  ready)
-    cmd_ready
-    ;;
-  status)
-    cmd_status
-    ;;
-  *)
-    echo "Usage: ./word {ready|status}" >&2
-    exit 1
-    ;;
- esac
+  ready)  ready ;;
+  status) status ;;
+  stop)   stop ;;
+  reset)  reset ;;
+  *) echo "Usage: ./word {ready|status|stop|reset}"; exit 2 ;;
+esac

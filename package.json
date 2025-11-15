@@ -3,12 +3,20 @@
   "version": "1.0.0",
   "description": "This is a minimal proof-of-concept showing: - A Chrome MV3 extension that injects a Ghost Overlay UI - A PHI-safe DOM mapper (labels/roles/selectors only) - A local agent (Node/Express) that receives the map and returns a deterministic fill plan - A demo HTML page to test against",
   "main": "index.js",
+  "bin": {
+    "codex": "bin/codex.mjs"
+  },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "./anchor-start.sh",
     "stop": "./anchor-stop.sh",
-    "status": "./anchor-status.sh",
-    "smoke": "node scripts/anchor-smoke.mjs",
+    "ready": "node bin/codex.mjs ready",
+    "status": "node bin/codex.mjs status",
+    "smoke": "node bin/codex.mjs smoke",
+    "kill": "node bin/codex.mjs kill",
+    "mcp": "node bin/codex.mjs mcp --stdio",
+    "anchor:status": "./anchor-status.sh",
+    "anchor:smoke": "node scripts/anchor-smoke.mjs",
     "smoke:old": "node scripts/smoke.mjs",
     "health": "node scripts/mcp-health-check.mjs",
     "mcp:start": "scripts/start-chrome-mcp.sh",
@@ -22,6 +30,8 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
-    "chrome-remote-interface": "^0.33.3"
+    "@modelcontextprotocol/sdk": "^1.22.0",
+    "chrome-remote-interface": "^0.33.3",
+    "commander": "^12.1.0"
   }
 }
