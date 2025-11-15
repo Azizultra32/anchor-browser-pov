@@ -92,6 +92,7 @@ type EditableEl = HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | H
 const NOTE_INPUT_ID = 'anchorGhostNoteInput'
 const TOGGLE_BUTTON_ID = '__anchor_ghost_toggle__'
 const PANEL_HOST_ID = '__anchor_ghost_overlay__'
+const snapshotFields = () => mapDom()
 
 let noteText = `Demo clinical note.
 Vitals stable.
@@ -357,6 +358,44 @@ function removePanel() {
   shadowRoot = null
 }
 
+function initMcpBridge() {
+  window.addEventListener('__ANCHOR_MCP_MAP_REQUEST__', () => {
+    try {
+      const detail = { url: location.href, fields: snapshotFields() }
+      window.dispatchEvent(new CustomEvent('__ANCHOR_MCP_MAP_RESPONSE__', { detail }))
+    } catch (error) {
+      window.dispatchEvent(new CustomEvent('__ANCHOR_MCP_MAP_RESPONSE__', { detail: { error: (error as Error)?.message || String(error) } }))
+    }
+  })
+
+  window.addEventListener('__ANCHOR_MCP_FILL_REQUEST__', (event) => {
+    const { selector, value } = (event as CustomEvent<{ selector?: string; value?: string }>).detail || {}
+    let success = false
+    let error: string | null = null
+    try {
+      if (selector) {
+        const el = document.querySelector(selector) as EditableEl | null
+        if (el && isEditable(el)) {
+          success = tryPaste(el, value ?? '')
+          if (!success) {
+            writeValue(el, value ?? '')
+            success = true
+          }
+        } else {
+          error = 'Field not found or not editable'
+        }
+      } else {
+        error = 'Selector missing'
+      }
+    } catch (err) {
+      error = (err as Error)?.message || String(err)
+    }
+    window.dispatchEvent(new CustomEvent('__ANCHOR_MCP_FILL_RESPONSE__', { detail: { success, selector, error } }))
+  })
+
+  console.log('AssistMD: MCP bridge initialized')
+}
+
 export function togglePanel() {
   if (isPanelMounted()) {
     removePanel()
@@ -438,7 +477,9 @@ export function initOverlay() {
       map: mapCurrentPage,
       send: sendCurrentMap,
       fill: fillDemoPlan,
-      getFields: currentFields
+      getFields: snapshotFields
     }
   }
+
+  initMcpBridge()
 }
