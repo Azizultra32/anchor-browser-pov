@@ -1,4 +1,5 @@
 import { mapDom, type FieldMeta } from './domMapper'
+import { uiModeManager, type UIMode } from './uiModes'
 
 let shadowRoot: ShadowRoot | null = null
 
@@ -162,6 +163,7 @@ function ensurePanel(): HTMLElement {
     <header>
       <span>Anchor Ghost Overlay</span>
       <div>
+        <button id="btnMode" style="margin-right:4px">Mode</button>
         <button id="btnClose">Close</button>
       </div>
     </header>
@@ -193,6 +195,12 @@ function ensurePanel(): HTMLElement {
 
   shadowRoot!.getElementById('btnClose')!.addEventListener('click', removePanel)
 
+  shadowRoot!.getElementById('btnMode')!.addEventListener('click', () => {
+    const newMode = uiModeManager.toggleMode()
+    updateUIForMode()
+    log(`Switched to ${newMode} mode`)
+  })
+
   shadowRoot!.getElementById('btnMap')!.addEventListener('click', () => {
     mapCurrentPage()
   })
@@ -205,6 +213,12 @@ function ensurePanel(): HTMLElement {
     void fillDemoPlan()
   })
 
+  // Apply initial UI mode
+  updateUIForMode()
+
+  // Listen for mode changes
+  window.addEventListener('__GHOST_UI_MODE_CHANGE__', updateUIForMode)
+
   return panel
 }
 
@@ -212,20 +226,29 @@ function renderFields(fields: FieldMeta[]) {
   const root = shadowRoot!
   const container = root.getElementById('fields')!
   container.innerHTML = ''
+  const config = uiModeManager.getConfig()
+  
   fields.forEach(f => {
     const row = document.createElement('div')
     row.className = 'field'
+    
+    let content = `<div><strong>${escapeHtml(f.label)}</strong></div>`
+    
+    if (config.showMetadata) {
+      content += `<div style="opacity:.7">${f.role}</div>`
+    }
+    
+    if (config.showSelectors) {
+      content += `<div style="opacity:.6;font-family:ui-monospace">${escapeHtml(f.selector)}</div>`
+    }
+    
     row.innerHTML = `
-      <div>
-        <div><strong>${escapeHtml(f.label)}</strong></div>
-        <div style="opacity:.7">${f.role}</div>
-        <div style="opacity:.6;font-family:ui-monospace">${escapeHtml(f.selector)}</div>
-      </div>
+      <div>${content}</div>
       <div style="opacity:.8">${f.editable ? 'editable' : 'read‑only'}</div>
     `
     container.appendChild(row)
   })
-    ; (container as any).__fields = fields
+  ;(container as any).__fields = fields
 }
 
 function currentFields(): FieldMeta[] {
@@ -281,6 +304,31 @@ function log(msg: string) {
   const div = document.createElement('div')
   div.textContent = msg
   el.appendChild(div)
+}
+
+function updateUIForMode() {
+  if (!shadowRoot) return
+  
+  const config = uiModeManager.getConfig()
+  const modeBtn = shadowRoot.getElementById('btnMode')
+  if (modeBtn) {
+    modeBtn.textContent = config.mode === 'clinician' ? 'Clinician' : 'Debug'
+  }
+  
+  // Re-render fields with new mode settings
+  const fields = currentFields()
+  if (fields.length > 0) {
+    renderFields(fields)
+  }
+  
+  // Update button visibility for simplified controls
+  const technicalButtons = ['btnSend', 'btnFill']
+  technicalButtons.forEach(id => {
+    const btn = shadowRoot.getElementById(id)
+    if (btn) {
+      btn.style.display = config.simplifiedControls ? 'none' : 'inline-block'
+    }
+  })
 }
 
 function escapeHtml(s: string) {

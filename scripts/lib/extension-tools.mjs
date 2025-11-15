@@ -18,6 +18,17 @@ async function withExtensionsPage (port, handler) {
   await Page.navigate({ url: 'chrome://extensions/' })
   await loadPromise
 
+  // wait for extensions-manager shadow DOM to be ready
+  const readyScript = '(() => !!document.querySelector("extensions-manager")?.shadowRoot)()'
+  for (let i = 0; i < 20; i++) {
+    const { result } = await Runtime.evaluate({ expression: readyScript, returnByValue: true })
+    if (result?.value) break
+    await delay(250)
+    if (i === 19) {
+      throw new Error('extensions-manager shadow root missing')
+    }
+  }
+
   try {
     return await handler({ client, Page, Runtime })
   } finally {
