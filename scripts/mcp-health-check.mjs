@@ -47,14 +47,34 @@ async function checkDemoPage ({ port, url }) {
   await Page.navigate({ url })
   await loadPromise
   await new Promise(resolve => setTimeout(resolve, 500))
-  const { result } = await Runtime.evaluate({ expression: 'typeof findCandidates', returnByValue: true })
+  let toggleFound = false
+  for (let i = 0; i < 20; i++) {
+    const toggleEval = await Runtime.evaluate({ expression: '!!document.getElementById("__anchor_ghost_toggle__")', returnByValue: true })
+    if (toggleEval.result?.value) {
+      toggleFound = true
+      break
+    }
+    await new Promise(resolve => setTimeout(resolve, 250))
+  }
+  const readinessEval = await Runtime.evaluate({
+    expression: `(() => {
+      const ghost = !!window.__ANCHOR_GHOST__
+      const host = !!document.getElementById('__anchor_ghost_overlay__')
+      const button = !!document.querySelector('[data-anchor-ghost-button]')
+      return { ghost, host, button }
+    })()`,
+    returnByValue: true
+  })
+  const readiness = readinessEval.result?.value || {}
   const hasGhostLog = logs.some(text => /AssistMD|Ghost/i.test(text))
   await client.close()
   try {
     await CDP.Close({ port, id: target.id })
   } catch (_) {}
   return {
-    findCandidatesType: result.value,
+    ghostObjectPresent: readiness.ghost === true,
+    overlayHostPresent: readiness.host === true,
+    toggleButtonPresent: readiness.button === true || toggleFound,
     hasGhostLog
   }
 }
@@ -108,8 +128,8 @@ async function main () {
   if (demoUrl) {
     try {
       summary.demoCheck = await checkDemoPage({ port, url: demoUrl })
-      if (summary.demoCheck.findCandidatesType !== 'function') {
-        issues.push('Content script not injected on demo page')
+      if (!summary.demoCheck.toggleButtonPresent) {
+        issues.push('Ghost toggle button not found on demo page')
       }
     } catch (err) {
       issues.push(`Demo check failed: ${err.message}`)

@@ -44,12 +44,15 @@ Anchor Browser is an experimental Chrome Manifest V3 extension plus a local agen
    - Uses CDP (`scripts/ensure-extension-state.mjs`) to flip Developer Mode **on** and toggle “Allow access to file URLs” for the unpacked extension before `chrome-devtools-mcp --stdio` starts.
    - Streams Chrome logs to `/tmp/chrome-mcp-browser.log` for later inspection.
 2. Use any MCP-capable client (Codex, Windsurf, etc.) to drive Chrome via DevTools.
-3. `npm run mcp:status` (or `node scripts/mcp-health-check.mjs`) at any time to confirm:
+3. `npm run mcp:map` / `npm run mcp:plan`
+   - `mcp:map` navigates to the demo EHR, triggers the Ghost MAP flow via CDP, and prints the latest `DomMap` captured by the extension/agent.
+   - `mcp:plan` feeds the latest map into `/actions/plan` to return a deterministic `FillPlan`. Override the target URL/note by editing the script or passing args when calling `node mcp/anchor-server.mjs ...` directly.
+4. `npm run mcp:status` (or `node scripts/mcp-health-check.mjs`) at any time to confirm:
    - DevTools endpoint responds
    - Developer Mode is still enabled
    - The unpacked extension is listed with no error badges and file-URL access
    - (Optional) The demo page injects `findCandidates`
-4. `npm run mcp:stop` stops both Chrome (for that profile/port) and the `chrome-devtools-mcp` helper, releasing the lock so the next session starts instantly.
+5. `npm run mcp:stop` stops both Chrome (for that profile/port) and the `chrome-devtools-mcp` helper, releasing the lock so the next session starts instantly.
 
 > Tip: `scripts/mcp-health-check.mjs --port=XXXX --extension=\"...\" --demo=file:///path` lets you validate other ports/domains too.
 
@@ -57,7 +60,7 @@ Anchor Browser is an experimental Chrome Manifest V3 extension plus a local agen
 - `./word ready` – Launch Chrome with the extension, start the agent and demo servers, wait for all three ports, then confirm the Ghost toggle renders on the demo page.
 - `./word status` – Print whether Chrome/agent/demo are running, rerun the toggle check, and tail the latest log lines from `logs/`.
 - `npm run smoke` – Rebuild the extension, drive Chrome via CDP to load `ehr.html`, click Ghost → Map → Send Map → Fill (Demo), verify demo fields received the deterministic values, and print a `SMOKE PASS` JSON summary.
-- `npm run mcp:start|mcp:status|mcp:stop` – Convenience wrappers for booting, checking, and stopping the DevTools MCP Chrome profile.
+- `npm run mcp:start|mcp:map|mcp:plan|mcp:status|mcp:stop` – Convenience wrappers for booting, exercising, checking, and stopping the DevTools MCP Chrome profile.
 - `npm run health` – Lightweight MCP sanity check (extension listed, Developer Mode on, demo content script injected).
 - Optional: `./tmux-monitor.sh` can keep Chrome/agent/demo panes visible for longer sessions, but it is not required for everyday development.
 

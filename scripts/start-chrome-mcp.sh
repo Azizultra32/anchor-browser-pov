@@ -2,12 +2,17 @@
 
 set -euo pipefail
 
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 CHROME_APP=${CHROME_APP:-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"}
 PORT=${PORT:-9222}
 PROFILE_DIR=${PROFILE_DIR:-/tmp/chrome-mcp}
+DEFAULT_EXTENSION_DIR="${ROOT_DIR}/extension/dist"
+EXTENSION_DIR=${MCP_EXTENSION_DIR:-$DEFAULT_EXTENSION_DIR}
 EXTENSION_NAME=${MCP_EXTENSION_NAME:-"Anchor Ghost Overlay (POC)"}
 LOCK_FILE="${PROFILE_DIR}/.chrome_mcp.lock"
 BROWSER_LOG=${MCP_BROWSER_LOG:-/tmp/chrome-mcp-browser.log}
+SKIP_ENSURE=${MCP_SKIP_ENSURE:-0}
+ENSURE_DELAY=${MCP_ENSURE_DELAY:-2}
 
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -21,6 +26,12 @@ require_cmd node
 
 if [ ! -x "${CHROME_APP}" ]; then
   echo "Chrome binary not found at ${CHROME_APP}" >&2
+  exit 1
+fi
+
+if [ ! -d "${EXTENSION_DIR}" ]; then
+  echo "Extension directory not found: ${EXTENSION_DIR}" >&2
+  echo "Build the extension first (cd extension && npm run build) or set MCP_EXTENSION_DIR." >&2
   exit 1
 fi
 
@@ -46,6 +57,7 @@ if ! pgrep -f "--remote-debugging-port=${PORT} --user-data-dir=${PROFILE_DIR}" >
   "${CHROME_APP}" \
     --remote-debugging-port="${PORT}" \
     --user-data-dir="${PROFILE_DIR}" \
+    --load-extension="${EXTENSION_DIR}" \
     --disable-extensions-file-access-check \
     --enable-file-cookies \
     --allow-file-access-from-files \
@@ -69,10 +81,15 @@ for i in $(seq 1 40); do
   fi
 done
 
-echo "Ensuring Developer Mode + file URL access for ${EXTENSION_NAME}..."
-if ! node scripts/ensure-extension-state.mjs --port="${PORT}" --extension="${EXTENSION_NAME}"; then
-  echo "Unable to confirm extension state; aborting chrome-devtools-mcp launch." >&2
-  exit 1
+if [ "${SKIP_ENSURE}" != "1" ]; then
+  sleep "${ENSURE_DELAY}"
+  echo "Ensuring Developer Mode + file URL access for ${EXTENSION_NAME}..."
+  if ! node scripts/ensure-extension-state.mjs --port="${PORT}" --extension="${EXTENSION_NAME}"; then
+    echo "Unable to confirm extension state; aborting chrome-devtools-mcp launch." >&2
+    exit 1
+  fi
+else
+  echo "Skipping extension state ensure step (MCP_SKIP_ENSURE=${SKIP_ENSURE})."
 fi
 
 echo "Starting chrome-devtools-mcp (stdio)…"

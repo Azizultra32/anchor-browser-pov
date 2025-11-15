@@ -9,7 +9,9 @@
     "health": "node scripts/mcp-health-check.mjs",
     "mcp:start": "scripts/start-chrome-mcp.sh",
     "mcp:stop": "scripts/stop-chrome-mcp.sh",
-    "mcp:status": "scripts/status-chrome-mcp.sh"
+    "mcp:status": "scripts/status-chrome-mcp.sh",
+    "mcp:map": "node mcp/anchor-server.mjs anchor_map_page http://localhost:8788/ehr.html",
+    "mcp:plan": "node mcp/anchor-server.mjs anchor_plan_fill http://localhost:8788/ehr.html 'MCP test note'"
   },
   "keywords": [],
   "author": "",

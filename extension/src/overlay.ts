@@ -102,6 +102,7 @@ function ensureToggleButton() {
   if (document.getElementById(TOGGLE_BUTTON_ID)) return
   const btn = document.createElement('button')
   btn.id = TOGGLE_BUTTON_ID
+  btn.dataset.anchorGhostButton = 'true'
   btn.type = 'button'
   btn.textContent = 'Ghost'
   Object.assign(btn.style, {
@@ -382,4 +383,14 @@ export function initOverlay() {
       }
     }
   })
+
+  if (!(window as any).__ANCHOR_GHOST__) {
+    ;(window as any).__ANCHOR_GHOST__ = {
+      toggle: togglePanel,
+      map: mapCurrentPage,
+      send: sendCurrentMap,
+      fill: fillDemoPlan,
+      getFields: currentFields
+    }
+  }
 }

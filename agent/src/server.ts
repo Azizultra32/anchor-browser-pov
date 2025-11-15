@@ -1,71 +1,250 @@
 import express from 'express'
 import cors from 'cors'
-import bodyParser from 'body-parser'
+import {
+  DomMap,
+  FieldDescriptor,
+  FillPlan,
+  FillStep,
+  ExecutionResult,
+  normalizeDomMap
+} from './schema'
 
 const app = express()
+const PORT = process.env.PORT || 8787
+
 app.use(cors())
-app.use(bodyParser.json({ limit: '2mb' }))
+app.use(express.json({ limit: '2mb' }))
 
-let latestMap: any = null
+let latestDomMap: DomMap | null = null
+let lastPlanIdCounter = 0
+const storedPlans = new Map<string, FillPlan>()
 
-app.get('/', (_req, res) => {
-  res.json({ ok: true, msg: 'Anchor Ghost Agent running' })
-})
+function nextPlanId(): string {
+  lastPlanIdCounter += 1
+  return `plan_${Date.now()}_${lastPlanIdCounter}`
+}
 
-app.post('/dom', (req, res) => {
-  latestMap = { ts: Date.now(), ...req.body }
-  res.json({ ok: true, fields: Array.isArray(req.body?.fields) ? req.body.fields.length : 0 })
-})
+function slug(label: string): string {
+  return (
+    label
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '') || 'FIELD'
+  )
+}
 
-app.post('/actions/fill', (req, res) => {
-  const fields = Array.isArray(req.body?.fields) ? req.body.fields : []
-  const note: string = typeof req.body?.note === 'string' ? req.body.note : ''
+function pickNoteTarget(fields: FieldDescriptor[]): FieldDescriptor | null {
+  const lc = (s: string) => s.toLowerCase()
+  const candidates = fields.filter((f) => f.editable)
 
-  const editable = fields.filter((f: any) => f?.editable && typeof f?.selector === 'string')
-  const actions: Array<{ type: string; selector: string; value: string }> = []
-  const used = new Set<string>()
+  const patterns = [
+    'note',
+    'assessment',
+    'plan',
+    'a/p',
+    'subjective',
+    'hpi',
+    'history of present illness'
+  ]
 
-  const pickNoteTarget = () => {
-    const candidates = editable.filter((f: any) => {
-      const label = String(f?.label ?? '')
-      return /note|assessment|plan|subjective|hpi/i.test(label) || /textarea/i.test(String(f?.role ?? ''))
-    })
-    return candidates[0] || editable[0]
-  }
-
-  if (note.trim()) {
-    const noteTarget = pickNoteTarget()
-    if (noteTarget) {
-      actions.push({
-        type: 'setValue',
-        selector: noteTarget.selector,
-        value: note.trim()
-      })
-      used.add(noteTarget.selector)
+  for (const f of candidates) {
+    const label = lc(f.label)
+    if (patterns.some((p) => label.includes(p))) {
+      return f
     }
   }
 
-  for (const f of editable) {
-    if (used.has(f.selector)) continue
-    actions.push({
-      type: 'setValue',
-      selector: f.selector,
-      value: `DEMO_${slug(f.label)}`
-    })
-    used.add(f.selector)
-  }
+  const textareaLike = candidates.find((f) =>
+    ['textarea', 'textbox', 'text'].includes(lc(f.role))
+  )
+  if (textareaLike) return textareaLike
 
-  res.json({ ok: true, actions })
-})
-
-function slug(s: string) {
-  return String(s || 'field')
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
+  return null
 }
 
-const port = process.env.PORT || 8787
-app.listen(port, () => {
-  console.log('Anchor Ghost Agent on http://localhost:' + port)
+function buildDemoPlan(
+  url: string,
+  fields: FieldDescriptor[],
+  note: string | undefined,
+  mode: string | undefined
+): FillPlan {
+  const editable = fields.filter((f) => f.editable)
+  const noteTarget = pickNoteTarget(editable)
+
+  const steps: FillStep[] = []
+
+  for (const field of editable) {
+    const isNote =
+      noteTarget && field.selector === noteTarget.selector && note !== undefined
+    const value = isNote ? note! : `DEMO_${slug(field.label || field.selector)}`
+
+    steps.push({
+      selector: field.selector,
+      action: 'setValue',
+      value,
+      label: field.label
+    })
+  }
+
+  const id = nextPlanId()
+  const createdAt = new Date().toISOString()
+
+  const plan: FillPlan = {
+    id,
+    url,
+    createdAt,
+    steps,
+    noteTargetSelector: noteTarget ? noteTarget.selector : undefined,
+    meta: {
+      mode: mode || 'demo',
+      strategy: 'single-note-target'
+    }
+  }
+
+  storedPlans.set(id, plan)
+  return plan
+}
+
+app.get('/', (_req, res) => {
+  res.json({
+    ok: true,
+    service: 'anchor-agent',
+    version: '0.1.0'
+  })
+})
+
+app.get('/dom', (_req, res) => {
+  if (!latestDomMap) {
+    res.status(404).json({ ok: false, error: 'No DOM map recorded yet' })
+    return
+  }
+  res.json(latestDomMap)
+})
+
+app.post('/dom', (req, res) => {
+  try {
+    const domMap = normalizeDomMap(req.body)
+    latestDomMap = domMap
+    res.json({
+      ok: true,
+      fields: domMap.fields.length,
+      capturedAt: domMap.capturedAt
+    })
+  } catch (err: any) {
+    res.status(400).json({
+      ok: false,
+      error: err?.message || 'Invalid DOM map payload'
+    })
+  }
+})
+
+app.post('/actions/plan', (req, res) => {
+  try {
+    const body = req.body || {}
+    const url: string | undefined = body.url || latestDomMap?.url
+    const note: string | undefined = body.note
+    const mode: string | undefined = body.mode
+
+    let fields: FieldDescriptor[] | undefined = undefined
+    if (Array.isArray(body.fields)) {
+      fields = body.fields.filter(
+        (f: any) =>
+          f &&
+          typeof f.selector === 'string' &&
+          typeof f.label === 'string' &&
+          typeof f.role === 'string' &&
+          typeof f.editable === 'boolean' &&
+          typeof f.visible === 'boolean'
+      )
+    } else if (latestDomMap) {
+      fields = latestDomMap.fields
+    }
+
+    if (!url || !fields || fields.length === 0) {
+      res.status(400).json({
+        ok: false,
+        error:
+          'Missing url/fields and no previous DOM map available; call /dom first or pass fields in the request.'
+      })
+      return
+    }
+
+    const plan = buildDemoPlan(url, fields, note, mode)
+    res.json(plan)
+  } catch (err: any) {
+    res.status(500).json({
+      ok: false,
+      error: err?.message || 'Failed to build plan'
+    })
+  }
+})
+
+app.post('/actions/fill', (req, res) => {
+  try {
+    const body = req.body || {}
+    const url = body.url || latestDomMap?.url
+    const fields = Array.isArray(body.fields)
+      ? body.fields
+      : latestDomMap?.fields
+    if (!url || !fields) {
+      res.status(400).json({
+        ok: false,
+        error: 'Missing url/fields and no previous DOM map available.'
+      })
+      return
+    }
+    const plan = buildDemoPlan(url, fields, body.note, body.mode)
+    res.json(plan)
+  } catch (err: any) {
+    res.status(500).json({
+      ok: false,
+      error: err?.message || 'Failed to build fill plan'
+    })
+  }
+})
+
+app.post('/actions/execute', (req, res) => {
+  const body = req.body || {}
+  const planId: string | undefined = body.planId
+  const plan: FillPlan | undefined = planId
+    ? storedPlans.get(planId)
+    : body.plan
+
+  if (!plan) {
+    const result: ExecutionResult = {
+      planId: planId || 'unknown',
+      ok: false,
+      applied: 0,
+      failed: 0,
+      errors: [
+        {
+          selector: '',
+          message: 'No plan found; executor not implemented in this POC.'
+        }
+      ]
+    }
+    res.status(400).json(result)
+    return
+  }
+
+  const result: ExecutionResult = {
+    planId: plan.id,
+    ok: false,
+    applied: 0,
+    failed: plan.steps.length,
+    errors: [
+      {
+        selector: '',
+        message:
+          'Execution is not implemented in the agent; run steps in the content script.'
+      }
+    ]
+  }
+
+  res.status(501).json(result)
+})
+
+app.listen(PORT, () => {
+  console.log(`Anchor agent listening on http://localhost:${PORT}`)
 })
