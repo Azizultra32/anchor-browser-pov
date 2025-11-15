@@ -274,11 +274,29 @@ function writeValue(el: EditableEl, value: string) {
   el.dispatchEvent(new Event('change', { bubbles: true }))
 }
 
+type PlanStep = {
+  selector?: string
+  type?: string
+  action?: string
+  value?: unknown
+}
+
+function getPlanSteps(plan: any): PlanStep[] {
+  if (Array.isArray(plan?.actions)) return plan.actions
+  if (Array.isArray(plan?.steps)) return plan.steps
+  return []
+}
+
+function stepType(step: PlanStep) {
+  return step.type || step.action || ''
+}
+
 function executeFillPlan(plan: any) {
-  if (!plan || !Array.isArray(plan.actions)) return
+  const steps = getPlanSteps(plan)
+  if (!steps.length) return
   undoBuffer = []
   const seen = new Set<string>()
-  for (const a of plan.actions) {
+  for (const a of steps) {
     try {
       if (typeof a.selector !== 'string') continue
       const el = document.querySelector(a.selector) as EditableEl | null
@@ -287,7 +305,7 @@ function executeFillPlan(plan: any) {
         undoBuffer.push({ el, selector: a.selector, previous: readValue(el) })
         seen.add(a.selector)
       }
-      if (a.type === 'setValue') {
+      if (stepType(a) === 'setValue') {
         writeValue(el, String(a.value ?? ''))
       }
     } catch { }
