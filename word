@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 LOGS="$ROOT/logs"
 PROFILE="/tmp/anchor-mcp"
 PORT=9222
-EXT_DIR="$ROOT/extension/dist"
+EXT_DIR="/Users/ali/Downloads/anchor-browser-poc/extension/dist"
 CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 
 mkdir -p "$LOGS"
@@ -24,6 +24,10 @@ start_chrome() {
     --load-extension="$EXT_DIR" \
     --no-first-run \
     --disable-extensions-file-access-check \
+    --enable-file-cookies \
+    --allow-file-access-from-files \
+    --disable-web-security \
+    --disable-site-isolation-trials \
     > "$LOGS/chrome.log" 2>&1 &
   
   local chrome_pid=$!
