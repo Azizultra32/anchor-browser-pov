@@ -7,8 +7,8 @@ Anchor Browser is an experimental Chrome Manifest V3 extension plus a local agen
 - `extension/` – Chrome extension (content script, overlay UI, Ghost toggle button, manifest, TypeScript build) that injects the Ghost controls and handles Map → Send → Fill interactions.
 - `agent/` – Node/Express agent on `http://localhost:8787` with `/dom` and `/actions/fill` endpoints; stores the latest DOM metadata and returns deterministic fill plans.
 - `demo/` – Demo EHR HTML (served via `http://localhost:8788/ehr.html`) that acts as the safe charting surface.
-- `scripts/` – Automation utilities (e.g., `check-toggle.mjs`, `smoke.mjs`, Chrome launch helpers) used by `word` and CI to verify the overlay.
-- `word` – Bash orchestrator that boots Chrome with remote debugging, starts the agent and demo servers, waits for readiness, and surfaces status/log tails.
+- `scripts/` – Automation utilities (e.g., `check-toggle.mjs`, `smoke.mjs`, Chrome launch helpers) used by CI to verify the overlay.
+- `anchor` – One-button orchestrator that boots Chrome with the extension auto-loaded, starts agent and demo servers, and opens the demo page automatically.
 
 ## Directory Layout
 ```
@@ -21,9 +21,9 @@ Anchor Browser is an experimental Chrome Manifest V3 extension plus a local agen
 │   ├── src/overlay.ts     # Ghost overlay, buttons, Map/Send/Fill handlers
 │   ├── src/domMapper.ts   # PHI-safe DOM mapper (metadata only)
 │   └── build.mjs          # esbuild pipeline to extension/dist
-├── logs/                  # Runtime logs captured by word
+├── logs/                  # Runtime logs (chrome.log, agent.log, demo.log)
 ├── scripts/               # check-toggle.mjs, smoke.mjs, Chrome helpers
-├── word                   # ./word ready|status orchestrator
+├── anchor                 # ./anchor start|stop|status|snapshot orchestrator
 ├── tmux-monitor.sh        # Optional tmux helper for long-running sessions
 └── package.json           # npm run smoke entry point
 ```
@@ -57,8 +57,22 @@ Anchor Browser is an experimental Chrome Manifest V3 extension plus a local agen
 > Tip: `scripts/mcp-health-check.mjs --port=XXXX --extension=\"...\" --demo=file:///path` lets you validate other ports/domains too.
 
 ## Usage
-- `./word ready` – Launch Chrome with the extension, start the agent and demo servers, wait for all three ports, then confirm the Ghost toggle renders on the demo page.
-- `./word status` – Print whether Chrome/agent/demo are running, rerun the toggle check, and tail the latest log lines from `logs/`.
+
+### Visual Dashboard (Recommended)
+- `npm run dashboard` – Launch the visual control panel at `http://localhost:3000`
+  - Big colorful buttons for Start/Stop/Status/Snapshot/Restore
+  - Real-time service status indicators (Chrome, Agent, Demo)
+  - Live logs display
+  - Quick links to demo page, DevTools, and agent API
+
+### Command Line
+- `./anchor start` – Build extension, launch Chrome with it auto-loaded, start agent and demo servers, open demo page automatically. One command to get the entire stack running.
+- `./anchor stop` – Kill all processes (Chrome, agent, demo) and clean up PID files.
+- `./anchor status` – Check health of all services and show recent logs.
+- `./anchor snapshot [message]` – Create timestamped Git snapshot branch and push to remote.
+- `./anchor restore` – Restore environment after reboot (alias for `./anchor start`).
+
+### Testing & MCP
 - `npm run smoke` – Rebuild the extension, drive Chrome via CDP to load `ehr.html`, click Ghost → Map → Send Map → Fill (Demo), verify demo fields received the deterministic values, and print a `SMOKE PASS` JSON summary.
 - `npm run mcp:start|mcp:map|mcp:plan|mcp:status|mcp:stop` – Convenience wrappers for booting, exercising, checking, and stopping the DevTools MCP Chrome profile.
 - `npm run health` – Lightweight MCP sanity check (extension listed, Developer Mode on, demo content script injected).

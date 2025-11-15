@@ -21,6 +21,7 @@ extension/*.map
 
 # Added per instructions
 *.pid
+.pids/
 artifacts/
 tmp/
 temp/

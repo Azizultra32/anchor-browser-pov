@@ -15,21 +15,32 @@ curl_ok() { curl -fsS "$1" >/dev/null 2>&1; }
 
 start_chrome() {
   pkill -f "remote-debugging-port=$PORT" || true
-  sleep 0.5
+  sleep 1
 
-  nohup "$CHROME" \
+  # Start Chrome in background
+  "$CHROME" \
     --remote-debugging-port="$PORT" \
     --user-data-dir="$PROFILE" \
     --load-extension="$EXT_DIR" \
     --no-first-run \
-    --disable-default-apps \
+    --disable-extensions-file-access-check \
     > "$LOGS/chrome.log" 2>&1 &
-
-  for i in {1..40}; do
-    curl_ok "http://localhost:$PORT/json/version" && break
-    sleep 0.25
+  
+  local chrome_pid=$!
+  
+  # Wait for Chrome to start
+  local attempts=0
+  while [ $attempts -lt 40 ]; do
+    if curl_ok "http://localhost:$PORT/json/version"; then
+      echo "Chrome started with PID $chrome_pid"
+      return 0
+    fi
+    attempts=$((attempts + 1))
+    sleep 0.5
   done
-  curl_ok "http://localhost:$PORT/json/version" || { echo "Chrome DevTools not reachable on :$PORT"; exit 1; }
+  
+  echo "Chrome DevTools not reachable on :$PORT after 20 seconds"
+  return 1
 }
 
 start_agent() {
