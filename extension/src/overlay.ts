@@ -288,7 +288,13 @@ function getPlanSteps(plan: any): PlanStep[] {
 }
 
 function stepType(step: PlanStep) {
-  return step.type || step.action || ''
+  // Handle both 'type' and 'action' fields
+  const actionType = step.type || step.action || ''
+  // Normalize 'setValue' variations
+  if (actionType === 'setValue' || actionType === 'set' || actionType === 'fill') {
+    return 'setValue'
+  }
+  return actionType
 }
 
 function executeFillPlan(plan: any) {
