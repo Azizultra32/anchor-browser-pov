@@ -1,0 +1,208 @@
+#!/usr/bin/env bash
+# ANCHOR ONE BUTTON SYSTEM
+# ---------------------------------------------------
+# ./anchor start       → Launch entire environment
+# ./anchor restore     → Restore environment after reboot
+# ./anchor snapshot    → Safe Git backup (timestamped)
+# ./anchor stop        → Kill everything
+# ./anchor status      → Health + logs
+# ./anchor tmux        → Optional so you can use tmux dashboard
+# ---------------------------------------------------
+
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+EXT_DIR="$ROOT/extension"
+EXT_DIST="$EXT_DIR/dist"
+AGENT_DIR="$ROOT/agent"
+DEMO_DIR="$ROOT/demo"
+LOG_DIR="$ROOT/logs"
+PID_DIR="$ROOT/.pids"
+
+PORT_DEVTOOLS=9222
+PORT_AGENT=8787
+PORT_DEMO=8788
+PROFILE_DIR="/tmp/anchor-mcp"
+
+CHROME_BIN="${CHROME_BINARY:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
+
+mkdir -p "$LOG_DIR" "$PID_DIR"
+
+need() { command -v "$1" >/dev/null 2>&1 || { echo "Missing: $1"; exit 1; }; }
+port_ready() { nc -z 127.0.0.1 "$1" >/dev/null 2>&1; }
+
+json_ok(){ curl -sf "http://127.0.0.1:$PORT_DEVTOOLS/json/version" >/dev/null 2>&1; }
+
+# ---------------------------
+# STOP EVERYTHING
+# ---------------------------
+stop_all() {
+  echo "[anchor] Stopping…"
+
+  for f in chrome agent demo; do
+    if [ -f "$PID_DIR/$f.pid" ]; then
+      PID=$(cat "$PID_DIR/$f.pid")
+      kill "$PID" 2>/dev/null || true
+      rm -f "$PID_DIR/$f.pid"
+    fi
+  done
+
+  pkill -f "remote-debugging-port=$PORT_DEVTOOLS" 2>/dev/null || true
+
+  echo "[anchor] ✓ STOPPED"
+}
+
+# ---------------------------
+# BUILD EXTENSION
+# ---------------------------
+build_extension() {
+  echo "[anchor] Building extension…"
+  ( cd "$EXT_DIR" && npm i >/dev/null 2>&1 && npm run build ) ||
+    { echo "Build failed"; exit 1; }
+  echo "[anchor] ✓ build complete"
+}
+
+# ---------------------------
+# START DEMO SERVER
+# ---------------------------
+start_demo() {
+  if port_ready "$PORT_DEMO"; then
+    echo "[anchor] Demo already running"
+    return
+  fi
+  echo "[anchor] Starting demo server..."
+  ( cd "$DEMO_DIR" && nohup python3 -m http.server "$PORT_DEMO" >"$LOG_DIR/demo.log" 2>&1 & echo $! >"$PID_DIR/demo.pid" )
+  sleep 1
+  echo "[anchor] ✓ demo ready"
+}
+
+# ---------------------------
+# START AGENT
+# ---------------------------
+start_agent() {
+  if port_ready "$PORT_AGENT"; then
+    echo "[anchor] Agent already running"
+    return
+  fi
+  echo "[anchor] Starting agent…"
+  ( cd "$AGENT_DIR" && npm i >/dev/null 2>&1 && nohup npm run dev >"$LOG_DIR/agent.log" 2>&1 & echo $! >"$PID_DIR/agent.pid" )
+  sleep 2
+  echo "[anchor] ✓ agent ready"
+}
+
+# ---------------------------
+# START CHROME
+# ---------------------------
+start_chrome() {
+  pkill -f "$PROFILE_DIR" 2>/dev/null || true
+
+  echo "[anchor] Launching Chrome…"
+  nohup "$CHROME_BIN" \
+    --remote-debugging-port="$PORT_DEVTOOLS" \
+    --user-data-dir="$PROFILE_DIR" \
+    --disable-extensions-except="$EXT_DIST" \
+    --load-extension="$EXT_DIST" \
+    --allow-file-access-from-files \
+    --disable-web-security \
+    >"$LOG_DIR/chrome.log" 2>&1 &
+  echo $! >"$PID_DIR/chrome.pid"
+
+  for i in {1..40}; do
+    json_ok && break
+    sleep 0.25
+  done
+
+  json_ok || { echo "DevTools not ready"; exit 1; }
+
+  echo "[anchor] ✓ Chrome ready"
+}
+
+# ---------------------------
+# OPEN DEMO TAB
+# ---------------------------
+open_demo_tab() {
+  URL="http://127.0.0.1:$PORT_DEMO/ehr.html"
+  curl -sf "http://127.0.0.1:$PORT_DEVTOOLS/json/new?$URL" >/dev/null 2>&1 || true
+  echo "[anchor] ✓ demo page opened"
+}
+
+# ---------------------------
+# SNAPSHOT TO GIT
+# ---------------------------
+snapshot() {
+  need git
+
+  git add -A
+
+  if ! git diff --cached --quiet; then
+    git commit -m "snapshot: $*"
+  fi
+
+  TS=$(date +%Y%m%d-%H%M%S)
+  SNAP="snapshots/$TS"
+
+  git branch -f "$SNAP"
+  git tag -f "snapshot-$TS"
+
+  if git remote get-url origin >/dev/null 2>&1; then
+    git push -u origin "$SNAP" --tags
+    echo "[anchor] ✓ snapshot pushed → branch $SNAP"
+  else
+    echo "[anchor] No git remote found. Snapshot saved locally."
+  fi
+}
+
+# ---------------------------
+# STATUS
+# ---------------------------
+status() {
+  echo "Chrome : $(json_ok && echo UP || echo DOWN)"
+  echo "Agent  : $(port_ready $PORT_AGENT && echo UP || echo DOWN)"
+  echo "Demo   : $(port_ready $PORT_DEMO && echo UP || echo DOWN)"
+
+  echo "--- chrome.log ---"
+  tail -n 10 "$LOG_DIR/chrome.log" 2>/dev/null || echo "(none)"
+  echo "--- agent.log ---"
+  tail -n 10 "$LOG_DIR/agent.log" 2>/dev/null || echo "(none)"
+  echo "--- demo.log ---"
+  tail -n 10 "$LOG_DIR/demo.log" 2>/dev/null || echo "(none)"
+}
+
+# ---------------------------
+# MASTER SWITCH
+# ---------------------------
+case "${1:-}" in
+  start)
+    build_extension
+    start_demo
+    start_agent
+    start_chrome
+    open_demo_tab
+    echo "[anchor] SYSTEM ONLINE."
+    ;;
+
+  restore)
+    ./anchor start
+    ;;
+
+  snapshot)
+    shift
+    snapshot "$*"
+    ;;
+
+  stop)
+    stop_all
+    ;;
+
+  status)
+    status
+    ;;
+
+  tmux)
+    [ -f "$ROOT/tmux-monitor.sh" ] && bash "$ROOT/tmux-monitor.sh" || echo "No tmux-monitor.sh found"
+    ;;
+
+  *)
+    echo "Usage: ./anchor {start|stop|status|snapshot|tmux|restore}"
+    ;;
+esac
