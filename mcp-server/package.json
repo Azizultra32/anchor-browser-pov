@@ -1,0 +1,26 @@
+{
+  "name": "anchor-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server providing AI agent tools for Anchor Browser EMR automation",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "anchor-mcp": "./dist/index.js"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.22.0",
+    "playwright": "^1.48.0",
+    "chrome-remote-interface": "^0.33.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.0"
+  }
+}

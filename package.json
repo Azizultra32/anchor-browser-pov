@@ -14,7 +14,7 @@
     "status": "node bin/codex.mjs status",
     "smoke": "node bin/codex.mjs smoke",
     "kill": "node bin/codex.mjs kill",
-    "mcp": "node bin/codex.mjs mcp --stdio",
+    "mcp": "cd mcp-server && npm run dev",
     "anchor:status": "./anchor-status.sh",
     "anchor:smoke": "node scripts/anchor-smoke.mjs",
     "smoke:old": "node scripts/smoke.mjs",
